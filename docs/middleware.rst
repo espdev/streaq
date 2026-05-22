@@ -28,6 +28,13 @@ Middleware are structured as wrapped functions for maximum flexibility--not only
 .. warning::
    Adding named keyword arguments to middleware (such as ``ctx`` here) will shadow arguments in your tasks with the same name, so use with caution!
 
+.. note::
+    If you're trying to set up observability with OpenTelemetry, the |otel|_ package provides automated, end-to-end distributed tracing for
+    your streaQ task queues.
+
+.. |otel| replace:: ``opentelemetry-instrumentation-streaq``
+.. _otel: https://github.com/definite-d/opentelemetry-instrumentation-streaq
+
 Stacking middleware
 -------------------
 
