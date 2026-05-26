@@ -1014,11 +1014,13 @@ class Worker(AsyncContextManagerMixin, Generic[C]):
             async with self.redis.pipeline(transaction=True) as pipe:
                 pipe.xack(stream_key, REDIS_GROUP, [msg.message_id])
                 pipe.xdel(stream_key, [msg.message_id])
+                pipe.srem(self._running_set, [task_id])
                 if to_delete:
                     pipe.delete(to_delete)
                 pipe.zadd(self.queue_key + msg.priority, {task_id: schedule})
         else:
             async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.srem(self._running_set, [task_id])
                 if to_delete:
                     pipe.delete(to_delete)
                 # mark message as immediately reclaimable
@@ -1038,7 +1040,6 @@ class Worker(AsyncContextManagerMixin, Generic[C]):
         """
         task_id = msg.task_id
         async with self.redis.pipeline(transaction=True) as pipe:
-            pipe.sadd(self._running_set, [task_id])
             commands = (
                 pipe.get(self.task_key + task_id),
                 pipe.incr(self._retry_key + task_id),
@@ -1127,6 +1128,7 @@ class Worker(AsyncContextManagerMixin, Generic[C]):
         )
         after = data.get("A")
         async with self.redis.pipeline(transaction=False) as pipe:
+            pipe.sadd(self._running_set, [task_id])
             if task.unique:
                 lock_key = self.prefix + REDIS_UNIQUE + fn_name
                 locked = pipe.set(
