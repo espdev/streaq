@@ -1617,19 +1617,27 @@ class Worker(AsyncContextManagerMixin, Generic[C]):
                 for priority in self.priorities
             ]
             commands = (
-                pipe.get(self.results_key + task_id),
+                pipe.exists([self.results_key + task_id]),
                 pipe.get(self.task_key + task_id),
                 pipe.get(self._retry_key + task_id),
                 pipe.smembers(self.dependencies_key + task_id),
                 pipe.smembers(self.dependents_key + task_id),
+                pipe.sismember(self._running_set, task_id),
             )
-        result, raw, try_count, dependencies, dependents = await gather(*commands)
+        result, raw, try_count, dependencies, dependents, running = await gather(
+            *commands
+        )
         if result or not raw:  # if result exists or task data doesn't
             return None
         data = self.deserialize(raw)
         res = await gather(*delayed)
         score = next((r for r in res if r), None)
-        dt = datetime.fromtimestamp(score / 1000, tz=self.tz) if score else None
+        if score:
+            dt = datetime.fromtimestamp(score / 1000, tz=self.tz)
+            status = TaskStatus.SCHEDULED
+        else:
+            dt = None
+            status = TaskStatus.RUNNING if running else TaskStatus.QUEUED
         return TaskInfo(
             task_id=task_id,
             fn_name=data["f"],
@@ -1640,6 +1648,7 @@ class Worker(AsyncContextManagerMixin, Generic[C]):
             scheduled=dt,
             dependencies=dependencies,
             dependents=dependents,
+            status=status,
         )
 
     async def unschedule_by_id(self, task_id: str) -> bool:
