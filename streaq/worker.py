@@ -1799,7 +1799,6 @@ class Worker(AsyncContextManagerMixin, Generic[C]):
         task_ids_with_scores = task_ids_with_scores[:limit]
         ids = [str(tid) for tid, _ in task_ids_with_scores]
         scores = [score for _, score in task_ids_with_scores]
-
         return await self._get_info_for_ids(TaskStatus.SCHEDULED, ids, scores)
 
     async def _get_queued_tasks(
