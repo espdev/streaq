@@ -1605,7 +1605,7 @@ class Worker(AsyncContextManagerMixin, Generic[C]):
 
     async def info_by_id(self, task_id: str) -> TaskInfo | None:
         """
-        Fetch info about a previously enqueued task.
+        Fetch info about an unfinished task.
 
         :param task_id: ID of the task to get info for
 

@@ -139,10 +139,31 @@ async def get_task(
     ],
     task_id: str,
 ) -> Any:
-    status = await worker.status_by_id(task_id)
+    status, info = await gather(
+        worker.status_by_id(task_id), worker.info_by_id(task_id)
+    )
+    if status == TaskStatus.NOT_FOUND:
+        raise HTTPException(
+            status_code=fast_status.HTTP_404_NOT_FOUND, detail="Task not found!"
+        )
     color, text_color = _STATUS_COLORS[status]
-    if status == TaskStatus.DONE:
-        result = await worker.result_by_id(task_id)
+    if info:
+        function = info.fn_name
+        created_time = info.created_time
+        worker_id = None
+        is_done = False
+        if info.scheduled:
+            schedule = info.scheduled.strftime(_fmt)
+        else:
+            schedule = None
+        task_try = info.tries
+        extra = {
+            "scheduled": schedule,
+            "dependencies": len(info.dependencies),
+            "dependents": len(info.dependents),
+        }
+    else:
+        result = await worker.result_by_id(task_id, 3)
         function = result.fn_name
         created_time = result.created_time
         is_done = True
@@ -162,26 +183,6 @@ async def get_task(
             "result": output,
             "start_time": start_dt.strftime(_fmt),
             "finish_time": end_dt.strftime(_fmt),
-        }
-    else:
-        info = await worker.info_by_id(task_id)
-        if not info:
-            raise HTTPException(
-                status_code=fast_status.HTTP_404_NOT_FOUND, detail="Task not found!"
-            )
-        function = info.fn_name
-        created_time = info.created_time
-        worker_id = None
-        is_done = False
-        if info.scheduled:
-            schedule = info.scheduled.strftime(_fmt)
-        else:
-            schedule = None
-        task_try = info.tries
-        extra = {
-            "scheduled": schedule,
-            "dependencies": len(info.dependencies),
-            "dependents": len(info.dependents),
         }
 
     created_dt = datetime.fromtimestamp(created_time / 1000, tz=worker.tz)
