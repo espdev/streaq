@@ -46,7 +46,6 @@ class TaskData(BaseModel):
 async def _get_context(
     worker: Worker[Any], base_url: str, statuses: list[TaskStatus] | None
 ) -> dict[str, Any]:
-
     @lru_cache(ttl=1)
     async def _get_tasks_by_statuses(
         statuses: tuple[TaskStatus, ...],
@@ -141,6 +140,7 @@ async def get_task(
     task_id: str,
 ) -> Any:
     status = await worker.status_by_id(task_id)
+    color, text_color = _STATUS_COLORS[status]
     if status == TaskStatus.DONE:
         result = await worker.result_by_id(task_id)
         function = result.fn_name
@@ -151,6 +151,7 @@ async def get_task(
         if result.success:
             output = result_formatter(result.result)
         else:
+            color = "danger"
             output = exception_formatter(result.exception)
         task_try = result.tries
         worker_id = result.worker_id
@@ -182,18 +183,6 @@ async def get_task(
             "dependencies": len(info.dependencies),
             "dependents": len(info.dependents),
         }
-    if status == TaskStatus.DONE:
-        color = "success"
-        text_color = "light"
-    elif status == TaskStatus.RUNNING:
-        color = "warning"
-        text_color = "dark"
-    elif status == TaskStatus.SCHEDULED:
-        color = "secondary"
-        text_color = "light"
-    else:
-        color = "info"
-        text_color = "dark"
 
     created_dt = datetime.fromtimestamp(created_time / 1000, tz=worker.tz)
     return templates.TemplateResponse(
