@@ -37,7 +37,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -49,14 +48,14 @@ classifiers = [
     "Topic :: System :: Systems Administration",
     "Typing :: Typed",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {file = "LICENSE"}
 authors = [
     { name = "Graeme Holliday", email = "graeme@tastyware.dev" }
 ]
 dependencies = [
     "anyio>=4.13.0",
-    "coredis>=6.6.1",
+    "coredis>=6.7.0",
     "crontab>=1.0.5",
     "typer>=0.19.2",
     "watchfiles>=1.1.0",
@@ -88,6 +87,7 @@ dev = [
     "pyright>=1.1.406",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
+    "pytest-randomly>=4.1.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.13.1",
     "sphinx>=8.1.3",

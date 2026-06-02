@@ -13,12 +13,13 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from anyio import create_task_group, sleep
-from coredis import RedisCluster
+from anyio import create_task_group, fail_after, sleep
+from coredis import ClusterConnectionPool, ConnectionPool, RedisCluster
 from coredis.connection import TCPLocation
 
+from streaq.constants import REDIS_HEALTH
 from streaq.task import TaskStatus
-from streaq.types import StreaqError, WorkerDepends
+from streaq.types import StreaqError
 from streaq.utils import gather
 from streaq.worker import Worker
 from tests.conftest import run_worker
@@ -46,8 +47,8 @@ async def test_lifespan(redis_url: str):
     worker = Worker(redis_url=redis_url, lifespan=deps, queue_name=uuid4().hex)
 
     @worker.task
-    async def foobar(ctx: WorkerContext = WorkerDepends()) -> bool:
-        return ctx.name == NAME_STR and ctx.name == worker.context.name
+    async def foobar() -> bool:
+        return worker.context.name == NAME_STR
 
     async with run_worker(worker):
         task = await foobar.enqueue()
@@ -63,7 +64,8 @@ async def test_health_check(redis_url: str):
     )
     async with run_worker(worker):
         await sleep(1)
-        worker_health = await worker.redis.get(worker._health_key)
+        health_key = f"{worker.prefix}{REDIS_HEALTH}:{worker.id}"
+        worker_health = await worker.redis.get(health_key)
         assert worker_health is not None
 
 
@@ -97,7 +99,6 @@ async def test_bad_deserializer(redis_url: str):
     async def foobar() -> None:
         print("This can't print!")
 
-    worker.burst = True
     async with run_worker(worker):
         task = await foobar.enqueue()
         with pytest.raises(StreaqError):
@@ -119,8 +120,8 @@ async def test_custom_serializer(worker: Worker):
 
 async def test_uninitialized_worker(worker: Worker):
     @worker.task
-    async def foobar(ctx: Any = WorkerDepends()) -> None:
-        print(ctx.nonexistent)
+    async def foobar() -> None:
+        print(worker.context)
 
     with pytest.raises(StreaqError):
         await foobar()
@@ -292,8 +293,7 @@ async def test_bad_depends_worker(worker: Worker):
     with pytest.raises(StreaqError):
         print(worker.context)
     with pytest.raises(StreaqError):
-        ctx = WorkerDepends()
-        print(ctx.nonexistent)
+        print(worker.context)
 
 
 async def test_custom_worker_id(redis_url: str):
@@ -303,9 +303,23 @@ async def test_custom_worker_id(redis_url: str):
     assert worker.id == worker_id
 
 
-def test_connection_pool(redis_url: str):
-    from coredis import ConnectionPool
+async def test_burst_after_execution(worker: Worker):
+    @worker.task
+    async def sleeper(time: int) -> None:
+        await sleep(time)
 
+    worker.burst = True
+    async with worker:
+        tasks = [sleeper.enqueue(1) for _ in range(10)]
+        await worker.enqueue_many(tasks)
+    with fail_after(3):
+        await worker.run_async()
+    async with worker:
+        results = await gather(*[t.result(3) for t in tasks])
+        assert all(r.success for r in results)
+
+
+def test_connection_pool(redis_url: str):
     pool = ConnectionPool.from_url(redis_url, decode_responses=True)
     worker = Worker(redis_pool=pool, queue_name=uuid4().hex)
     worker2 = Worker(redis_pool=pool, queue_name=worker.queue_name)
@@ -313,16 +327,12 @@ def test_connection_pool(redis_url: str):
 
 
 def test_connection_pool_illegal(redis_url: str):
-    from coredis import ConnectionPool
-
     pool = ConnectionPool.from_url(redis_url, decode_responses=False, max_connections=4)
     with pytest.raises(StreaqError):
         _ = Worker(redis_pool=pool, queue_name=uuid4().hex)
 
 
 def test_cluster_connection_pool():
-    from coredis import ClusterConnectionPool
-
     pool = ClusterConnectionPool(
         startup_nodes=[TCPLocation("cluster-1", 7000)], decode_responses=True
     )
@@ -398,13 +408,15 @@ async def test_include_duplicate(redis_url: str, worker: Worker):
         worker.include(worker2)
 
 
-async def test_grace_period(worker: Worker):
+async def test_grace_period(redis_url: str):
+    pool = ConnectionPool.from_url(redis_url, decode_responses=True)
+    worker = Worker(redis_pool=pool, queue_name=uuid4().hex, grace_period=3)
+
     @worker.task
     async def foobar() -> None:
         await sleep(3)
 
-    worker.grace_period = 3
-    async with create_task_group() as tg:
+    async with pool, create_task_group() as tg:
         await tg.start(worker.run_async)
         task = await foobar.enqueue()
         await sleep(1)
@@ -413,21 +425,36 @@ async def test_grace_period(worker: Worker):
         assert res.success
 
 
-async def test_grace_period_no_new_tasks(worker: Worker):
+async def test_grace_period_no_new_tasks(redis_url: str):
+    pool = ConnectionPool.from_url(redis_url, decode_responses=True)
+    worker = Worker(redis_pool=pool, queue_name=uuid4().hex, grace_period=5)
+
     @worker.task
     async def foobar() -> None:
         await sleep(3)
 
-    worker.grace_period = 5
-    task = foobar.enqueue().start(delay=1)
-    async with create_task_group() as tg:
-        await tg.start(worker.run_async)
-        await foobar.enqueue()
-        await sleep(1)
-        await task
-        os.kill(os.getpid(), signal.SIGINT)
-    async with worker:
-        assert await task.status() == TaskStatus.SCHEDULED
+    async with pool:
+        task = foobar.enqueue().start(delay=1)
+        async with create_task_group() as tg:
+            await tg.start(worker.run_async)
+            await foobar.enqueue()
+            await sleep(1)
+            await task
+            os.kill(os.getpid(), signal.SIGINT)
+        async with worker:
+            assert await task.status() == TaskStatus.SCHEDULED
+
+
+async def test_no_grace_period(worker: Worker):
+    @worker.task()
+    async def sleeper(time: int) -> None:
+        await sleep(time)
+
+    with fail_after(3):
+        async with run_worker(worker):
+            tasks = [sleeper.enqueue(5) for _ in range(48)]
+            await worker.enqueue_many(tasks)
+            await sleep(1)
 
 
 async def test_get_tasks_by_status_scheduled(worker: Worker):
@@ -471,6 +498,17 @@ async def test_get_tasks_by_status_scheduled_with_limit(worker: Worker):
         # Test limit
         scheduled = await worker.get_tasks_by_status(TaskStatus.SCHEDULED, limit=2)
         assert len(scheduled) <= 2
+
+
+async def test_get_tasks_by_status_queued(worker: Worker):
+    @worker.task()
+    async def foobar() -> None: ...
+
+    async with worker:
+        tasks = [foobar.enqueue() for _ in range(4)]
+        await worker.enqueue_many(tasks)
+        queued = await worker.get_tasks_by_status(TaskStatus.QUEUED)
+        assert len(queued) == 4
 
 
 async def test_get_tasks_by_status_running(worker: Worker):
@@ -522,11 +560,6 @@ async def test_get_tasks_by_status_empty_done(worker: Worker):
     async with worker:
         completed = await worker.get_tasks_by_status(TaskStatus.DONE)
         assert completed == []
-
-
-def test_health_tab():
-    with pytest.warns(match="deprecated as it no longer does anything"):
-        _ = Worker(health_crontab="*/5 * * * *")
 
 
 async def test_cron_max_schedule_drift_stale(worker: Worker):

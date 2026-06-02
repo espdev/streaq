@@ -9,14 +9,7 @@ from anyio import sleep
 
 from streaq.constants import REDIS_UNIQUE
 from streaq.task import TaskStatus
-from streaq.types import (
-    ReturnCoroutine,
-    StreaqError,
-    StreaqRetry,
-    TaskContext,
-    TaskDepends,
-    WorkerDepends,
-)
+from streaq.types import ReturnCoroutine, StreaqError, StreaqRetry
 from streaq.utils import gather
 from streaq.worker import Worker
 from tests.conftest import run_worker
@@ -93,7 +86,7 @@ async def test_task_cron(worker: Worker):
 
     with pytest.raises(StreaqError):
 
-        @worker.cron("* * * * *", timeout=None)
+        @worker.cron("* * * * * *", timeout=None)
         async def cron3() -> None:
             await sleep(0)
 
@@ -117,10 +110,10 @@ async def test_task_info(worker: Worker):
 
 async def test_task_retry(worker: Worker):
     @worker.task(unique=True, timeout=10)
-    async def foobar(ctx: TaskContext = TaskDepends()) -> int:
-        if ctx.tries < 3:
+    async def foobar() -> int:
+        if foobar.context.tries < 3:
             raise StreaqRetry("Retrying!")
-        return ctx.tries
+        return foobar.context.tries
 
     async with run_worker(worker):
         task = await foobar.enqueue()
@@ -131,10 +124,10 @@ async def test_task_retry(worker: Worker):
 
 async def test_task_retry_with_delay(worker: Worker):
     @worker.task
-    async def foobar(ctx: TaskContext = TaskDepends()) -> int:
-        if ctx.tries == 1:
+    async def foobar() -> int:
+        if foobar.context.tries == 1:
             raise StreaqRetry("Retrying!", delay=timedelta(seconds=3))
-        return ctx.tries
+        return foobar.context.tries
 
     async with run_worker(worker):
         task = await foobar.enqueue()
@@ -146,12 +139,12 @@ async def test_task_retry_with_delay(worker: Worker):
 
 async def test_task_retry_with_schedule(worker: Worker):
     @worker.task
-    async def foobar(ctx: TaskContext = TaskDepends()) -> int:
-        if ctx.tries == 1:
+    async def foobar() -> int:
+        if foobar.context.tries == 1:
             raise StreaqRetry(
                 "Retrying!", schedule=datetime.now() + timedelta(seconds=2)
             )
-        return ctx.tries
+        return foobar.context.tries
 
     async with run_worker(worker):
         task = await foobar.enqueue()
@@ -177,8 +170,8 @@ async def test_task_failure(worker: Worker):
 
 async def test_task_retry_no_delay(worker: Worker):
     @worker.task
-    async def foobar(ctx: TaskContext = TaskDepends()) -> bool:
-        if ctx.tries == 1:
+    async def foobar() -> bool:
+        if foobar.context.tries == 1:
             raise StreaqRetry("Retrying!", delay=0)
         return True
 
@@ -208,7 +201,6 @@ async def test_task_failed_abort(worker: Worker):
     async def foobar() -> bool:
         return True
 
-    worker.burst = True
     async with run_worker(worker):
         task = await foobar.enqueue()
         result = await task.result(3)
@@ -274,7 +266,7 @@ async def test_task_dependency_failed(worker: Worker):
         pass
 
     async with run_worker(worker):
-        task = await foobar.enqueue().start()
+        task = await foobar.enqueue().start(delay=1)
         dep = await do_nothing.enqueue().start(after=task.id)
         res = await dep.result(3)
         assert not res.success
@@ -500,41 +492,6 @@ async def test_middleware_with_dependencies(redis_url: str):
         assert res.result == 2
 
 
-async def test_middleware_duplicate_param_names(redis_url: str):
-    @asynccontextmanager
-    async def lifespan():
-        yield 1
-
-    worker = Worker(redis_url=redis_url, queue_name=uuid4().hex, lifespan=lifespan)
-
-    @worker.task
-    async def incr(val: int, ctx: int = WorkerDepends()) -> int:
-        assert ctx == 1
-        return val + ctx
-
-    @worker.middleware
-    def first(task: ReturnCoroutine) -> ReturnCoroutine:
-        async def wrapper(*args, ctx: TaskContext = TaskDepends(), **kwargs) -> Any:
-            assert isinstance(ctx, TaskContext)
-            return await task(*args, **kwargs)
-
-        return wrapper
-
-    @worker.middleware
-    def second(task: ReturnCoroutine) -> ReturnCoroutine:
-        async def wrapper(*args, ctx: int = WorkerDepends(), **kwargs) -> Any:
-            assert ctx == 1
-            return await task(*args, **kwargs)
-
-        return wrapper
-
-    async with run_worker(worker):
-        task = await incr.enqueue(1)
-        res = await task.result(3)
-        assert res.success
-        assert res.result == 2
-
-
 async def test_task_pipeline(worker: Worker):
     @worker.task
     async def double(val: int) -> int:
@@ -696,9 +653,6 @@ async def test_bad_depends_task(worker: Worker):
 
     with pytest.raises(StreaqError):
         print(foobar.context)
-    with pytest.raises(StreaqError):
-        ctx = TaskDepends()
-        print(ctx.task_id)
 
 
 async def test_sync_direct(worker: Worker):
