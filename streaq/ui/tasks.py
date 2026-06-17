@@ -231,7 +231,10 @@ async def get_workers(
         worker_keys.extend(keys)
         if cursor == 0:
             break
-    context: dict[str, Any] = {"base_url": request.url_for("get_root").path}
+    context: dict[str, Any] = {
+        "base_url": request.url_for("get_root").path,
+        "title": "workers",
+    }
     if worker_keys:
         workers = await worker.redis.mget(worker_keys)
         context["all"] = [
@@ -277,6 +280,7 @@ async def get_cronjobs(
                 k: datetime.fromtimestamp(v / 1000, tz=worker.tz).strftime(_fmt)
                 for k, v in schedule
             },
+            "title": "cron",
         },
     )
 
