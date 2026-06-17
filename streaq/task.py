@@ -349,7 +349,7 @@ class RegisteredTask:
     expire: timedelta | int | None
     max_schedule_drift: timedelta | int | None
     max_tries: int | None
-    retry_on_timeout: bool
+    retry_timeouts: bool
     silent: bool
     timeout: timedelta | int | None
     ttl: timedelta | int | None

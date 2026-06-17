@@ -49,7 +49,7 @@ async def test_task_timeout(worker: Worker):
 
 
 async def test_task_timeout_retries(worker: Worker):
-    @worker.task(timeout=timedelta(seconds=1), retry_on_timeout=True)
+    @worker.task(timeout=1, retry_timeouts=True)
     async def foobar() -> int:
         if foobar.context.tries == 1:
             await sleep(5)
